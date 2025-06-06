@@ -455,9 +455,8 @@ if st.sidebar.button("Generate HTML Report"):
 else:
     st.sidebar.warning("Click to generate and download the HTML report.")
 
-
-# --- Feature: Show App Code ---
 st.markdown("---")
+# --- Feature: Show App Code ---
 st.header('App Source Code', divider='gray')
 st.write("DEBUG: Attempting to render app source code section.")
 current_script_path = Path(__file__)
