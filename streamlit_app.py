@@ -78,6 +78,37 @@ def generate_html_report(performance_html, transactions_html, clustering_html, i
     """
     return html_content.encode('utf-8')
 
+def generate_source_code_html():
+    """Generates an HTML file containing the app's source code."""
+    current_script_path = Path(__file__)
+    try:
+        with open(current_script_path, 'r') as f:
+            app_code = f.read()
+
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>App Source Code</title>
+            <style>
+                body {{ font-family: 'Courier New', monospace; margin: 20px; background-color: #f6f8fa; color: #24292e; }}
+                pre {{ background-color: #eef; padding: 15px; border-radius: 5px; overflow-x: auto; }}
+                code {{ font-size: 0.9em; }}
+                h1 {{ color: #0366d6; }}
+            </style>
+        </head>
+        <body>
+            <h1>Streamlit App Source Code</h1>
+            <p>This is the Python code that builds this Streamlit application.</p>
+            <pre><code>{app_code}</code></pre>
+        </body>
+        </html>
+        """
+        return html_content.encode('utf-8')
+    except Exception as e:
+        st.error(f"Error generating source code HTML: {e}")
+        return None
+
 # --- Main Streamlit App ---
 st.title("💰 Fund Performance and Portfolio Analytics")
 
@@ -140,17 +171,17 @@ if transactions_file:
     transactions_df = load_excel_data(transactions_file, sheet_name='Transactions')
     if transactions_df is not None:
         required_cols_transactions = {'Fund', 'Fund ID', 'Security ID', 'Shares', 'Price', 'Base Market Value', 'Purchase or Sale'}
-        if not required_cols_transactions.issubset(transactions_df.columns):
-            st.error(f"Transaction Data is missing required columns: {required_cols_transactions - set(transactions_df.columns)}")
+
+        actual_cols = set(transactions_df.columns)
+        
+        if not required_cols_transactions.issubset(actual_cols):
+            st.error(f"Transaction Data is missing required columns: {required_cols_transactions - actual_cols}")
             transactions_df = None
         else:
-            try:
-                # --- NEW FIX: Drop 'Date' column from transactions_df if it exists ---
-                if 'Date' in transactions_df.columns:
-                    transactions_df = transactions_df.drop(columns=['Date'])
-                    st.sidebar.info("Removed 'Date' column from Transaction Data to prevent aggregation errors.")
-                # --- END NEW FIX ---
+            columns_to_keep = list(required_cols_transactions)
+            transactions_df = transactions_df[columns_to_keep]
 
+            try:
                 transactions_df['Shares'] = pd.to_numeric(transactions_df['Shares'], errors='coerce')
                 transactions_df['Price'] = pd.to_numeric(transactions_df['Price'], errors='coerce')
                 transactions_df['Base Market Value'] = pd.to_numeric(transactions_df['Base Market Value'], errors='coerce')
@@ -158,6 +189,7 @@ if transactions_file:
             except Exception as e:
                 st.error(f"Error converting numeric columns in Transaction Data: {e}. Please check 'Shares', 'Price', and 'Base Market Value' columns.")
                 transactions_df = None
+
 
 # --- Download Uploaded Data Section in Sidebar ---
 st.sidebar.markdown("---")
@@ -429,50 +461,47 @@ else:
 
 
 st.markdown("---")
-# --- HTML Report Generation ---
-st.sidebar.header("Generate Report")
-if st.sidebar.button("Generate HTML Report"):
-    combined_insights_html = f"""
-    <h3>Key Insights:</h3>
-    {insights_html_traded}
-    {insights_html_complexity}
-    <p><i>Further insights can be added programmatically here.</i></p>
-    """
-    html_report_bytes = generate_html_report(
-        performance_plot_html,
-        transactions_plot_html,
-        clustering_plot_html,
-        combined_insights_html
-    )
-    st.sidebar.download_button(
-        label="Download HTML Report",
-        data=html_report_bytes,
-        file_name="fund_analytics_report.html",
-        mime="text/html",
-        help="Download a comprehensive HTML report of the analyses."
-    )
-    st.sidebar.success("Report generation initiated. Click the download button in the sidebar!")
-else:
-    st.sidebar.warning("Click to generate and download the HTML report.")
+# --- HTML Report Generation & Source Code Download ---
+st.sidebar.header("Generate Outputs") # Changed header for combined buttons
 
+col_report_buttons = st.sidebar.columns(2) # Create columns in the sidebar
 
-# --- Feature: Show App Code ---
-st.markdown("---")
-st.header('App Source Code', divider='gray')
+with col_report_buttons[0]:
+    if st.button("Generate HTML Report"):
+        combined_insights_html = f"""
+        <h3>Key Insights:</h3>
+        {insights_html_traded}
+        {insights_html_complexity}
+        <p><i>Further insights can be added programmatically here.</i></p>
+        """
+        html_report_bytes = generate_html_report(
+            performance_plot_html,
+            transactions_plot_html,
+            clustering_plot_html,
+            combined_insights_html
+        )
+        st.download_button(
+            label="Download HTML Report",
+            data=html_report_bytes,
+            file_name="fund_analytics_report.html",
+            mime="text/html",
+            help="Download a comprehensive HTML report of the analyses."
+        )
+        st.sidebar.success("Report generation initiated. Click the download button!")
+    else:
+        st.sidebar.warning("Click to generate and download the HTML report.")
 
-current_script_path = Path(__file__)
-
-# ADD THESE DEBUGGING LINES:
-st.write(f"DEBUG: Script path detected: {current_script_path}")
-st.write(f"DEBUG: Does path exist? {current_script_path.exists()}")
-st.write(f"DEBUG: Is it a file? {current_script_path.is_file()}")
-
-
-try:
-    with open(current_script_path, 'r') as f:
-        app_code = f.read()
-    with st.expander("Click to view the Python code for this app"):
-        st.code(app_code, language='python')
-except Exception as e:
-    # Keep this as st.warning/info for visibility, or check full logs
-    st.warning(f"DEBUG ERROR: Could not load app source code: {e}")
+with col_report_buttons[1]:
+    if st.button("Download App Source Code"):
+        source_code_html_bytes = generate_source_code_html()
+        if source_code_html_bytes:
+            st.download_button(
+                label="Download Source Code HTML",
+                data=source_code_html_bytes,
+                file_name="app_source_code.html",
+                mime="text/html",
+                help="Download the Python source code of this app as an HTML file."
+            )
+            st.sidebar.success("Source code generation initiated. Click the download button!")
+        else:
+            st.sidebar.error("Could not generate source code HTML.")
