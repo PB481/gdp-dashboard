@@ -429,6 +429,18 @@ else:
 
 
 st.markdown("---")
+# --- Feature: Show App Code ---
+st.header('App Source Code', divider='gray')
+st.write("DEBUG: Attempting to render app source code section.")
+current_script_path = Path(__file__)
+
+try:
+    with open(current_script_path, 'r') as f:
+        app_code = f.read()
+    with st.expander("Click to view the Python code for this app"):
+        st.code(app_code, language='python')
+
+st.markdown("---")
 # --- HTML Report Generation ---
 st.sidebar.header("Generate Report")
 if st.sidebar.button("Generate HTML Report"):
