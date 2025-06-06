@@ -109,7 +109,6 @@ if performance_file:
             fund_performance_df = None
         else:
             try:
-                # Convert 'Date' to datetime objects; if it was already, this does nothing
                 fund_performance_df['Date'] = pd.to_datetime(fund_performance_df['Date'])
                 fund_performance_df = fund_performance_df.sort_values(by=['Fund Name', 'Date'])
                 st.sidebar.success("Fund Performance Data Loaded!")
@@ -146,12 +145,15 @@ if transactions_file:
             transactions_df = None
         else:
             try:
+                # --- NEW FIX: Drop 'Date' column from transactions_df if it exists ---
+                if 'Date' in transactions_df.columns:
+                    transactions_df = transactions_df.drop(columns=['Date'])
+                    st.sidebar.info("Removed 'Date' column from Transaction Data to prevent aggregation errors.")
+                # --- END NEW FIX ---
+
                 transactions_df['Shares'] = pd.to_numeric(transactions_df['Shares'], errors='coerce')
                 transactions_df['Price'] = pd.to_numeric(transactions_df['Price'], errors='coerce')
                 transactions_df['Base Market Value'] = pd.to_numeric(transactions_df['Base Market Value'], errors='coerce')
-                # IMPORTANT: If 'Date' was ever introduced to transactions_df,
-                # ensure it's not implicitly summed or dropped if not needed.
-                # For this dataset, 'Date' is not a required column, so no action needed.
                 st.sidebar.success("Transaction Data Loaded!")
             except Exception as e:
                 st.error(f"Error converting numeric columns in Transaction Data: {e}. Please check 'Shares', 'Price', and 'Base Market Value' columns.")
@@ -215,12 +217,10 @@ st.markdown("---")
 # 2. Security Transactions Analysis
 st.header("2. Security Transactions Analysis")
 if transactions_df is not None and not transactions_df.empty:
-    # Drop rows where essential numeric columns are NaN for calculations
     transactions_df_cleaned = transactions_df.dropna(subset=['Shares', 'Price', 'Base Market Value'])
 
     if not transactions_df_cleaned.empty:
         st.subheader("Transactions by Share Volume")
-        # Ensure only 'Shares' is selected for sum to avoid TypeError on datetime columns
         transaction_volume = transactions_df_cleaned.groupby(['Fund', 'Security ID'])['Shares'].sum().reset_index(name='Total_Shares').sort_values(by='Total_Shares', ascending=False)
 
         fig_volume = px.bar(
@@ -278,8 +278,7 @@ if portfolio_df is not None and not portfolio_df.empty:
         clustering_df = fund_portfolio_agg.set_index('Fund').join(industry_exposure).reset_index()
 
         if transactions_df is not None and not transactions_df.empty:
-            # Ensure transactions_df is properly cleaned before summing
-            transactions_df_cleaned_for_cluster = transactions_df.dropna(subset=['Shares']) # Only need shares for this sum
+            transactions_df_cleaned_for_cluster = transactions_df.dropna(subset=['Shares'])
             if not transactions_df_cleaned_for_cluster.empty:
                 fund_transaction_volume = transactions_df_cleaned_for_cluster.groupby('Fund')['Shares'].sum().reset_index(name='Total_Shares_Traded')
                 clustering_df = pd.merge(clustering_df, fund_transaction_volume, on='Fund', how='left').fillna(0)
@@ -354,12 +353,10 @@ st.header("Highest and Lowest Volume of Assets Traded")
 if transactions_df is not None and not transactions_df.empty:
     transactions_df_cleaned = transactions_df.dropna(subset=['Shares', 'Price'])
     if not transactions_df_cleaned.empty:
-        # Explicitly ensure 'Shares' and 'Price' are numeric before multiplication
         transactions_df_cleaned['Shares'] = pd.to_numeric(transactions_df_cleaned['Shares'], errors='coerce')
         transactions_df_cleaned['Price'] = pd.to_numeric(transactions_df_cleaned['Price'], errors='coerce')
         transactions_df_cleaned['Total_Value'] = transactions_df_cleaned['Shares'] * transactions_df_cleaned['Price']
         
-        # Drop NaNs again if Total_Value became NaN due to coerce
         transactions_df_cleaned = transactions_df_cleaned.dropna(subset=['Total_Value'])
 
         if not transactions_df_cleaned.empty:
