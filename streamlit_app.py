@@ -3,13 +3,14 @@ import pandas as pd
 import plotly.express as px
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
-import numpy as np # For numerical operations
-from pathlib import Path # Added for reading current script
-import base64 # Added for base64 encoding
+import numpy as np
+from pathlib import Path
+import base64 # Added for base64 encoding for report download
 
 st.set_page_config(layout="wide", page_title="Fund Analytics Dashboard")
 
 # --- Initialize all HTML variables early to prevent NameError ---
+# These are used for the HTML report generation
 performance_plot_html = "<i>Fund Performance Data not available.</i>"
 transactions_plot_html = "<i>Transaction Data not available.</i>"
 clustering_plot_html = "<i>Portfolio Holdings Data not available.</i>"
@@ -18,11 +19,13 @@ insights_html_complexity = "<i>Portfolio Holdings Data not available for definin
 
 # --- Helper Functions ---
 def load_excel_data(uploaded_file, sheet_name=None):
-    """Loads data from an uploaded Excel file."""
+    """
+    Loads data from an uploaded Excel file.
+    Resets file pointer to the beginning for reliable reading.
+    """
     if uploaded_file is not None:
         try:
-            # Reset file pointer to the beginning for reliable reading
-            uploaded_file.seek(0)
+            uploaded_file.seek(0) # Reset file pointer to the beginning
             if sheet_name:
                 df = pd.read_excel(uploaded_file, sheet_name=sheet_name)
             else:
@@ -34,7 +37,10 @@ def load_excel_data(uploaded_file, sheet_name=None):
     return None
 
 def generate_html_report(performance_html, transactions_html, clustering_html, insights_html):
-    """Generates a simple HTML report."""
+    """
+    Generates a simple HTML report as a byte string.
+    Includes Plotly.js CDN for chart rendering.
+    """
     html_content = f"""
     <!DOCTYPE html>
     <html>
@@ -52,6 +58,7 @@ def generate_html_report(performance_html, transactions_html, clustering_html, i
     </head>
     <body>
         <h1>Fund Performance and Portfolio Analysis Report</h1>
+        <p>Report generated on: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
 
         <div class="section">
             <h2>1. Fund Performance</h2>
@@ -76,9 +83,7 @@ def generate_html_report(performance_html, transactions_html, clustering_html, i
     </body>
     </html>
     """
-    # Changed base64 encoding to return raw bytes for download button
     return html_content.encode('utf-8')
-
 
 # --- Main Streamlit App ---
 st.title("💰 Fund Performance and Portfolio Analytics")
@@ -109,7 +114,7 @@ if performance_file:
         required_cols_performance = {'ID', 'Fund Name', 'Price', 'Date'}
         if not required_cols_performance.issubset(fund_performance_df.columns):
             st.error(f"Fund Performance Data is missing required columns: {required_cols_performance - set(fund_performance_df.columns)}")
-            fund_performance_df = None # Invalidate dataframe if columns are missing
+            fund_performance_df = None
         else:
             try:
                 fund_performance_df['Date'] = pd.to_datetime(fund_performance_df['Date'])
@@ -191,7 +196,7 @@ if fund_performance_df is not None and not fund_performance_df.empty:
     selected_funds_performance = st.multiselect(
         "Select Funds for Performance Chart",
         options=fund_performance_df['Fund Name'].unique(),
-        default=fund_performance_df['Fund Name'].unique()[:min(5, len(fund_performance_df['Fund Name'].unique()))]
+        default=list(fund_performance_df['Fund Name'].unique())[:min(5, len(fund_performance_df['Fund Name'].unique()))] # Convert to list
     )
     if selected_funds_performance:
         filtered_performance_df = fund_performance_df[fund_performance_df['Fund Name'].isin(selected_funds_performance)]
@@ -203,6 +208,7 @@ if fund_performance_df is not None and not fund_performance_df.empty:
             title="Fund Performance Over Time"
         )
         st.plotly_chart(fig_performance, use_container_width=True)
+        # Generate HTML for report, ensuring plotly.js is included only once per report
         performance_plot_html = fig_performance.to_html(full_html=False, include_plotlyjs='cdn')
     else:
         st.info("Please select at least one fund to view performance.")
@@ -218,9 +224,8 @@ if transactions_df is not None and not transactions_df.empty:
 
     if not transactions_df_cleaned.empty:
         st.subheader("Transactions by Share Volume")
-        transaction_volume = transactions_df_cleaned.groupby(['Fund', 'Security ID']).agg(
-            Total_Shares=('Shares', 'sum')
-        ).reset_index().sort_values(by='Total_Shares', ascending=False)
+        # Explicitly select 'Shares' for sum to avoid TypeError on datetime columns
+        transaction_volume = transactions_df_cleaned.groupby(['Fund', 'Security ID'])['Shares'].sum().reset_index(name='Total_Shares').sort_values(by='Total_Shares', ascending=False)
 
         fig_volume = px.bar(
             transaction_volume.head(20), # Show top 20 for readability
@@ -240,7 +245,7 @@ if transactions_df is not None and not transactions_df.empty:
             title="Number of Transactions by Fund"
         )
         st.plotly_chart(fig_num_transactions, use_container_width=True)
-        # Avoid multiple plotly.js inclusions
+        # Generate HTML for report, ensure plotly.js is NOT included again (False)
         transactions_plot_html = fig_volume.to_html(full_html=False, include_plotlyjs=False) + fig_num_transactions.to_html(full_html=False, include_plotlyjs=False)
     else:
         st.warning("Transaction data became empty after cleaning missing Shares/Price values.")
@@ -258,7 +263,6 @@ if portfolio_df is not None and not portfolio_df.empty:
     # --- Feature Engineering for Clustering ---
     st.subheader("Clustering Parameters and Feature Engineering")
 
-    # Drop rows where 'Market Value' or 'Shares held' might be NaN after coerce
     portfolio_df_cleaned = portfolio_df.dropna(subset=['Market Value', 'Shares held'])
     if portfolio_df_cleaned.empty:
         st.warning("Portfolio data became empty after cleaning missing Market Value/Shares held values.")
@@ -277,16 +281,15 @@ if portfolio_df is not None and not portfolio_df.empty:
             values='Market Value',
             aggfunc='sum',
             fill_value=0
-        ).fillna(0) # Fill NaNs after pivot
+        ).fillna(0)
 
         # Merge aggregated data with industry exposure
         clustering_df = fund_portfolio_agg.set_index('Fund').join(industry_exposure).reset_index()
 
         # Add simulated transaction volume for clustering
         if transactions_df is not None and not transactions_df.empty:
-            fund_transaction_volume = transactions_df.groupby('Fund').agg(
-                Total_Shares_Traded=('Shares', 'sum')
-            ).reset_index()
+            # Explicitly sum 'Shares'
+            fund_transaction_volume = transactions_df.groupby('Fund')['Shares'].sum().reset_index(name='Total_Shares_Traded')
             clustering_df = pd.merge(clustering_df, fund_transaction_volume, on='Fund', how='left').fillna(0)
         else:
             st.warning("Transaction data not available for transaction volume in clustering. Simulating zeros.")
@@ -299,11 +302,10 @@ if portfolio_df is not None and not portfolio_df.empty:
         max_num_shapes = st.slider("Maximum number of fund shapes (clusters)", min_value=2, max_value=10, value=5)
 
         # Prepare data for clustering
-        # Select only numeric columns for scaling and clustering
         features_for_clustering = clustering_df.drop(columns=['Fund'], errors='ignore')
         numeric_features = features_for_clustering.select_dtypes(include=np.number)
 
-        if not numeric_features.empty and len(numeric_features) >= 2: # Need at least 2 samples for clustering
+        if not numeric_features.empty and len(numeric_features) >= 2:
             scaler = StandardScaler()
             scaled_features = scaler.fit_transform(numeric_features)
 
@@ -312,25 +314,26 @@ if portfolio_df is not None and not portfolio_df.empty:
                 st.warning(f"Number of clusters ({n_clusters}) is greater than the number of funds ({len(scaled_features)}). Adjusting clusters to number of funds.")
                 n_clusters = len(scaled_features)
 
-            if n_clusters < 2: # Re-check after potential adjustment
+            if n_clusters < 2:
                 st.warning("Not enough funds for clustering (requires at least 2 funds for 2 clusters).")
                 clustering_plot_html = "<i>Not enough funds for clustering.</i>"
             else:
                 try:
-                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10) # n_init for robustness
+                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
                     clustering_df['Cluster'] = kmeans.fit_predict(scaled_features)
 
                     st.subheader("Fund Clusters (Shapes)")
                     fig_cluster = px.scatter(
                         clustering_df,
-                        x="Total_Market_Value", # Example X-axis, can be changed
-                        y="Unique_Securities",  # Example Y-axis, can be changed
+                        x="Total_Market_Value",
+                        y="Unique_Securities",
                         color="Cluster",
                         hover_data=['Fund'] + list(numeric_features.columns),
                         title=f"Fund Commonalities (Clustering - {n_clusters} Shapes)"
                     )
                     st.plotly_chart(fig_cluster, use_container_width=True)
-                    clustering_plot_html = fig_cluster.to_html(full_html=False, include_plotlyjs=False) # Avoid multiple plotly.js inclusions
+                    # Generate HTML for report, ensure plotly.js is NOT included again (False)
+                    clustering_plot_html = fig_cluster.to_html(full_html=False, include_plotlyjs=False)
 
                     # Determine most common shape
                     most_common_shape = clustering_df['Cluster'].mode()[0]
@@ -388,26 +391,25 @@ st.header("Security Complexity (User Defined)")
 st.markdown("Here, you can define a 'complexity score' for different security types.")
 
 if portfolio_df is not None and not portfolio_df.empty:
-    unique_industries = portfolio_df['Industry'].dropna().unique().tolist() # Drop NA industries
+    unique_industries = portfolio_df['Industry'].dropna().unique().tolist()
     if unique_industries:
         st.subheader("Define Complexity by Industry")
         complexity_scores = {}
-        for industry in sorted(unique_industries): # Sort for consistent order
-            complexity_scores[industry] = st.slider(f"Complexity for '{industry}'", 0, 10, 5, key=f"comp_{industry}") # Added unique key
+        for industry in sorted(unique_industries):
+            complexity_scores[industry] = st.slider(f"Complexity for '{industry}'", 0, 10, 5, key=f"comp_{industry}")
 
         # Ensure 'Market Value' and 'Shares held' are numeric before mapping
         portfolio_df['Security_Complexity'] = portfolio_df['Industry'].map(complexity_scores).fillna(0)
 
         st.subheader("Portfolio with User-Defined Security Complexity")
-        st.dataframe(portfolio_df[['Fund', 'Security ID', 'Industry', 'Security_Complexity', 'Market Value', 'Shares held']].head(10)) # Show a sample
+        st.dataframe(portfolio_df[['Fund', 'Security ID', 'Industry', 'Security_Complexity', 'Market Value', 'Shares held']].head(10))
 
-        # Check if relevant columns exist and are numeric before plotting
         if all(col in portfolio_df.columns for col in ['Market Value', 'Shares held', 'Security_Complexity']) and \
            pd.api.types.is_numeric_dtype(portfolio_df['Market Value']) and \
            pd.api.types.is_numeric_dtype(portfolio_df['Shares held']) and \
            pd.api.types.is_numeric_dtype(portfolio_df['Security_Complexity']):
             fig_complexity = px.scatter(
-                portfolio_df.dropna(subset=['Market Value', 'Shares held', 'Security_Complexity']), # Drop NA for plotting
+                portfolio_df.dropna(subset=['Market Value', 'Shares held', 'Security_Complexity']),
                 x="Market Value",
                 y="Shares held",
                 color="Security_Complexity",
@@ -431,10 +433,7 @@ else:
 st.markdown("---")
 # --- HTML Report Generation ---
 st.sidebar.header("Generate Report")
-# Ensure the HTML report generation button appears even if no data is uploaded yet,
-# but the report itself will reflect missing data.
 if st.sidebar.button("Generate HTML Report"):
-    # insights_html now combines the different insight parts
     combined_insights_html = f"""
     <h3>Key Insights:</h3>
     {insights_html_traded}
@@ -454,7 +453,7 @@ if st.sidebar.button("Generate HTML Report"):
         mime="text/html",
         help="Download a comprehensive HTML report of the analyses."
     )
-    st.sidebar.success("Report generation initiated. Click the download button!")
+    st.sidebar.success("Report generation initiated. Click the download button in the sidebar!")
 else:
     st.sidebar.warning("Click to generate and download the HTML report.")
 
