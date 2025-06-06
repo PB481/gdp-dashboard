@@ -402,4 +402,73 @@ if portfolio_df is not None and not portfolio_df.empty:
         st.dataframe(portfolio_df[['Fund', 'Security ID', 'Industry', 'Security_Complexity', 'Market Value', 'Shares held']].head(10)) # Show a sample
 
         # Check if relevant columns exist and are numeric before plotting
-        if all(col in portfolio_
+        if all(col in portfolio_df.columns for col in ['Market Value', 'Shares held', 'Security_Complexity']) and \
+           pd.api.types.is_numeric_dtype(portfolio_df['Market Value']) and \
+           pd.api.types.is_numeric_dtype(portfolio_df['Shares held']) and \
+           pd.api.types.is_numeric_dtype(portfolio_df['Security_Complexity']):
+            fig_complexity = px.scatter(
+                portfolio_df.dropna(subset=['Market Value', 'Shares held', 'Security_Complexity']), # Drop NA for plotting
+                x="Market Value",
+                y="Shares held",
+                color="Security_Complexity",
+                hover_data=['Fund', 'Security ID', 'Industry'],
+                title="Portfolio Holdings by Market Value vs. Shares Held (Color by Complexity)"
+            )
+            st.plotly_chart(fig_complexity, use_container_width=True)
+            insights_html_complexity = f"""
+            <h3>Security Complexity (User Defined)</h3>
+            <p>Security complexity scores defined by the user for various industries.</p>
+            <p><b>Complexity Scores:</b> {complexity_scores}</p>
+            """
+        else:
+            st.warning("Cannot plot security complexity due to missing or non-numeric 'Market Value', 'Shares held', or 'Security_Complexity' data.")
+    else:
+        st.info("No unique industries found in Portfolio Data to define complexity.")
+else:
+    st.info("Please upload valid Portfolio Holdings Data to define security complexity.")
+
+
+st.markdown("---")
+# --- HTML Report Generation ---
+st.sidebar.header("Generate Report")
+# Ensure the HTML report generation button appears even if no data is uploaded yet,
+# but the report itself will reflect missing data.
+if st.sidebar.button("Generate HTML Report"):
+    # insights_html now combines the different insight parts
+    combined_insights_html = f"""
+    <h3>Key Insights:</h3>
+    {insights_html_traded}
+    {insights_html_complexity}
+    <p><i>Further insights can be added programmatically here.</i></p>
+    """
+    html_report_bytes = generate_html_report(
+        performance_plot_html,
+        transactions_plot_html,
+        clustering_plot_html,
+        combined_insights_html
+    )
+    st.sidebar.download_button(
+        label="Download HTML Report",
+        data=html_report_bytes,
+        file_name="fund_analytics_report.html",
+        mime="text/html",
+        help="Download a comprehensive HTML report of the analyses."
+    )
+    st.sidebar.success("Report generation initiated. Click the download button!")
+else:
+    st.sidebar.warning("Click to generate and download the HTML report.")
+
+
+# --- Feature: Show App Code ---
+st.markdown("---")
+st.header('App Source Code', divider='gray')
+
+current_script_path = Path(__file__)
+
+try:
+    with open(current_script_path, 'r') as f:
+        app_code = f.read()
+    with st.expander("Click to view the Python code for this app"):
+        st.code(app_code, language='python')
+except Exception as e:
+    st.error(f"Could not load app source code: {e}")
