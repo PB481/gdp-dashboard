@@ -468,4 +468,4 @@ try:
     with st.expander("Click to view the Python code for this app"):
         st.code(app_code, language='python')
 except Exception as e:
-    st.warning(f"DEBUG ERROR: Could not load app source code: {e}") # CHANGE THIS
+    st.warning(f"Could not load app source code: {e}")
