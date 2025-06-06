@@ -460,8 +460,6 @@ else:
 st.markdown("---")
 st.header('App Source Code', divider='gray')
 
-st.write("DEBUG: Attempting to render app source code section.")
-
 current_script_path = Path(__file__)
 
 # ADD THESE DEBUGGING LINES:
