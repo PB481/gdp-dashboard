@@ -457,10 +457,18 @@ else:
 
 
 # --- Feature: Show App Code ---
-st.markdown("---") # Add a separator
+st.markdown("---")
 st.header('App Source Code', divider='gray')
 
+st.write("DEBUG: Attempting to render app source code section.")
+
 current_script_path = Path(__file__)
+
+# ADD THESE DEBUGGING LINES:
+st.write(f"DEBUG: Script path detected: {current_script_path}")
+st.write(f"DEBUG: Does path exist? {current_script_path.exists()}")
+st.write(f"DEBUG: Is it a file? {current_script_path.is_file()}")
+
 
 try:
     with open(current_script_path, 'r') as f:
@@ -468,4 +476,5 @@ try:
     with st.expander("Click to view the Python code for this app"):
         st.code(app_code, language='python')
 except Exception as e:
-    st.error(f"Could not load app source code: {e}")
+    # Keep this as st.warning/info for visibility, or check full logs
+    st.warning(f"DEBUG ERROR: Could not load app source code: {e}")
