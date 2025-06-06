@@ -4,6 +4,8 @@ import plotly.express as px
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 import numpy as np # For numerical operations
+from pathlib import Path # Added for reading current script
+import base64 # Added for base64 encoding
 
 st.set_page_config(layout="wide", page_title="Fund Analytics Dashboard")
 
@@ -19,6 +21,8 @@ def load_excel_data(uploaded_file, sheet_name=None):
     """Loads data from an uploaded Excel file."""
     if uploaded_file is not None:
         try:
+            # Reset file pointer to the beginning for reliable reading
+            uploaded_file.seek(0)
             if sheet_name:
                 df = pd.read_excel(uploaded_file, sheet_name=sheet_name)
             else:
@@ -44,6 +48,7 @@ def generate_html_report(performance_html, transactions_html, clustering_html, i
             th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
             th {{ background-color: #f2f2f2; }}
         </style>
+        <script src="https://cdn.jsdelivr.net/npm/plotly.js@latest/dist/plotly.min.js"></script>
     </head>
     <body>
         <h1>Fund Performance and Portfolio Analysis Report</h1>
@@ -71,9 +76,9 @@ def generate_html_report(performance_html, transactions_html, clustering_html, i
     </body>
     </html>
     """
-    import base64 # Import base64 here if not used globally
-    b64 = base64.b64encode(html_content.encode()).decode()
-    return f'<a href="data:text/html;base64,{b64}" download="fund_analytics_report.html">Download HTML Report</a>'
+    # Changed base64 encoding to return raw bytes for download button
+    return html_content.encode('utf-8')
+
 
 # --- Main Streamlit App ---
 st.title("💰 Fund Performance and Portfolio Analytics")
@@ -91,8 +96,14 @@ fund_performance_df = None
 portfolio_df = None
 transactions_df = None
 
+# Variables to store original file bytes for download
+original_performance_bytes = None
+original_portfolio_bytes = None
+original_transactions_bytes = None
+
 # 1. Fund Performance Data
 if performance_file:
+    original_performance_bytes = performance_file.getvalue() # Store original bytes
     fund_performance_df = load_excel_data(performance_file, sheet_name='Performance')
     if fund_performance_df is not None:
         required_cols_performance = {'ID', 'Fund Name', 'Price', 'Date'}
@@ -110,6 +121,7 @@ if performance_file:
 
 # 2. Portfolio Holdings Data
 if portfolio_file:
+    original_portfolio_bytes = portfolio_file.getvalue() # Store original bytes
     portfolio_df = load_excel_data(portfolio_file, sheet_name='Portfolio')
     if portfolio_df is not None:
         required_cols_portfolio = {'Fund', 'Fund IS', 'Security ID', 'Security Name', 'Industry', 'Market Value', 'Shares held'}
@@ -127,6 +139,7 @@ if portfolio_file:
 
 # 3. Transaction Data
 if transactions_file:
+    original_transactions_bytes = transactions_file.getvalue() # Store original bytes
     transactions_df = load_excel_data(transactions_file, sheet_name='Transactions')
     if transactions_df is not None:
         required_cols_transactions = {'Fund', 'Fund ID', 'Security ID', 'Shares', 'Price', 'Base Market Value', 'Purchase or Sale'}
@@ -142,6 +155,32 @@ if transactions_file:
             except Exception as e:
                 st.error(f"Error converting numeric columns in Transaction Data: {e}")
                 transactions_df = None
+
+# --- Download Uploaded Data Section in Sidebar ---
+st.sidebar.markdown("---")
+st.sidebar.header("Download Uploaded Files")
+
+if original_performance_bytes:
+    st.sidebar.download_button(
+        label="Download Performance Excel",
+        data=original_performance_bytes,
+        file_name="performance_data_uploaded.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+if original_portfolio_bytes:
+    st.sidebar.download_button(
+        label="Download Portfolio Excel",
+        data=original_portfolio_bytes,
+        file_name="portfolio_data_uploaded.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+if original_transactions_bytes:
+    st.sidebar.download_button(
+        label="Download Transactions Excel",
+        data=original_transactions_bytes,
+        file_name="transactions_data_uploaded.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
 # --- Analysis and Visualization Sections ---
 
@@ -164,7 +203,7 @@ if fund_performance_df is not None and not fund_performance_df.empty:
             title="Fund Performance Over Time"
         )
         st.plotly_chart(fig_performance, use_container_width=True)
-        performance_plot_html = fig_performance.to_html(full_html=False, include_plotlyjs='cdn') # include_plotlyjs here
+        performance_plot_html = fig_performance.to_html(full_html=False, include_plotlyjs='cdn')
     else:
         st.info("Please select at least one fund to view performance.")
 else:
@@ -175,7 +214,6 @@ st.markdown("---")
 # 2. Security Transactions Analysis
 st.header("2. Security Transactions Analysis")
 if transactions_df is not None and not transactions_df.empty:
-    # Drop rows where 'Shares' or 'Price' might be NaN after coerce
     transactions_df_cleaned = transactions_df.dropna(subset=['Shares', 'Price', 'Base Market Value'])
 
     if not transactions_df_cleaned.empty:
@@ -364,50 +402,4 @@ if portfolio_df is not None and not portfolio_df.empty:
         st.dataframe(portfolio_df[['Fund', 'Security ID', 'Industry', 'Security_Complexity', 'Market Value', 'Shares held']].head(10)) # Show a sample
 
         # Check if relevant columns exist and are numeric before plotting
-        if all(col in portfolio_df.columns for col in ['Market Value', 'Shares held', 'Security_Complexity']) and \
-           pd.api.types.is_numeric_dtype(portfolio_df['Market Value']) and \
-           pd.api.types.is_numeric_dtype(portfolio_df['Shares held']) and \
-           pd.api.types.is_numeric_dtype(portfolio_df['Security_Complexity']):
-            fig_complexity = px.scatter(
-                portfolio_df.dropna(subset=['Market Value', 'Shares held', 'Security_Complexity']), # Drop NA for plotting
-                x="Market Value",
-                y="Shares held",
-                color="Security_Complexity",
-                hover_data=['Fund', 'Security ID', 'Industry'],
-                title="Portfolio Holdings by Market Value vs. Shares Held (Color by Complexity)"
-            )
-            st.plotly_chart(fig_complexity, use_container_width=True)
-            insights_html_complexity = f"""
-            <h3>Security Complexity (User Defined)</h3>
-            <p>Security complexity scores defined by the user for various industries.</p>
-            <p><b>Complexity Scores:</b> {complexity_scores}</p>
-            """
-        else:
-            st.warning("Cannot plot security complexity due to missing or non-numeric 'Market Value', 'Shares held', or 'Security_Complexity' data.")
-    else:
-        st.info("No unique industries found in Portfolio Data to define complexity.")
-else:
-    st.info("Please upload valid Portfolio Holdings Data to define security complexity.")
-
-
-st.markdown("---")
-# --- HTML Report Generation ---
-st.sidebar.header("Generate Report")
-if st.sidebar.button("Generate HTML Report"):
-    # insights_html now combines the different insight parts
-    combined_insights_html = f"""
-    <h3>Key Insights:</h3>
-    {insights_html_traded}
-    {insights_html_complexity}
-    <p><i>Further insights can be added programmatically here.</i></p>
-    """
-    download_link = generate_html_report(
-        performance_plot_html,
-        transactions_plot_html,
-        clustering_plot_html,
-        combined_insights_html
-    )
-    st.sidebar.markdown(download_link, unsafe_allow_html=True)
-    st.sidebar.success("Report generated successfully!")
-else:
-    st.sidebar.warning("Please upload necessary data and ensure analyses are complete to generate a comprehensive report.")
+        if all(col in portfolio_
