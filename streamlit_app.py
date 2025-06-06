@@ -5,12 +5,11 @@ from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 import numpy as np
 from pathlib import Path
-import base64 # Added for base64 encoding for report download
+import base64
 
 st.set_page_config(layout="wide", page_title="Fund Analytics Dashboard")
 
 # --- Initialize all HTML variables early to prevent NameError ---
-# These are used for the HTML report generation
 performance_plot_html = "<i>Fund Performance Data not available.</i>"
 transactions_plot_html = "<i>Transaction Data not available.</i>"
 clustering_plot_html = "<i>Portfolio Holdings Data not available.</i>"
@@ -19,13 +18,10 @@ insights_html_complexity = "<i>Portfolio Holdings Data not available for definin
 
 # --- Helper Functions ---
 def load_excel_data(uploaded_file, sheet_name=None):
-    """
-    Loads data from an uploaded Excel file.
-    Resets file pointer to the beginning for reliable reading.
-    """
+    """Loads data from an uploaded Excel file."""
     if uploaded_file is not None:
         try:
-            uploaded_file.seek(0) # Reset file pointer to the beginning
+            uploaded_file.seek(0)
             if sheet_name:
                 df = pd.read_excel(uploaded_file, sheet_name=sheet_name)
             else:
@@ -37,10 +33,7 @@ def load_excel_data(uploaded_file, sheet_name=None):
     return None
 
 def generate_html_report(performance_html, transactions_html, clustering_html, insights_html):
-    """
-    Generates a simple HTML report as a byte string.
-    Includes Plotly.js CDN for chart rendering.
-    """
+    """Generates a simple HTML report as a byte string."""
     html_content = f"""
     <!DOCTYPE html>
     <html>
@@ -101,14 +94,13 @@ fund_performance_df = None
 portfolio_df = None
 transactions_df = None
 
-# Variables to store original file bytes for download
 original_performance_bytes = None
 original_portfolio_bytes = None
 original_transactions_bytes = None
 
 # 1. Fund Performance Data
 if performance_file:
-    original_performance_bytes = performance_file.getvalue() # Store original bytes
+    original_performance_bytes = performance_file.getvalue()
     fund_performance_df = load_excel_data(performance_file, sheet_name='Performance')
     if fund_performance_df is not None:
         required_cols_performance = {'ID', 'Fund Name', 'Price', 'Date'}
@@ -117,16 +109,17 @@ if performance_file:
             fund_performance_df = None
         else:
             try:
+                # Convert 'Date' to datetime objects; if it was already, this does nothing
                 fund_performance_df['Date'] = pd.to_datetime(fund_performance_df['Date'])
                 fund_performance_df = fund_performance_df.sort_values(by=['Fund Name', 'Date'])
                 st.sidebar.success("Fund Performance Data Loaded!")
             except Exception as e:
-                st.error(f"Error converting 'Date' column in Fund Performance Data: {e}")
+                st.error(f"Error converting 'Date' column in Fund Performance Data: {e}. Please ensure 'Date' column is in a recognized date format.")
                 fund_performance_df = None
 
 # 2. Portfolio Holdings Data
 if portfolio_file:
-    original_portfolio_bytes = portfolio_file.getvalue() # Store original bytes
+    original_portfolio_bytes = portfolio_file.getvalue()
     portfolio_df = load_excel_data(portfolio_file, sheet_name='Portfolio')
     if portfolio_df is not None:
         required_cols_portfolio = {'Fund', 'Fund IS', 'Security ID', 'Security Name', 'Industry', 'Market Value', 'Shares held'}
@@ -139,12 +132,12 @@ if portfolio_file:
                 portfolio_df['Shares held'] = pd.to_numeric(portfolio_df['Shares held'], errors='coerce')
                 st.sidebar.success("Portfolio Holdings Data Loaded!")
             except Exception as e:
-                st.error(f"Error converting numeric columns in Portfolio Holdings Data: {e}")
+                st.error(f"Error converting numeric columns in Portfolio Holdings Data: {e}. Please check 'Market Value' and 'Shares held' columns.")
                 portfolio_df = None
 
 # 3. Transaction Data
 if transactions_file:
-    original_transactions_bytes = transactions_file.getvalue() # Store original bytes
+    original_transactions_bytes = transactions_file.getvalue()
     transactions_df = load_excel_data(transactions_file, sheet_name='Transactions')
     if transactions_df is not None:
         required_cols_transactions = {'Fund', 'Fund ID', 'Security ID', 'Shares', 'Price', 'Base Market Value', 'Purchase or Sale'}
@@ -156,9 +149,12 @@ if transactions_file:
                 transactions_df['Shares'] = pd.to_numeric(transactions_df['Shares'], errors='coerce')
                 transactions_df['Price'] = pd.to_numeric(transactions_df['Price'], errors='coerce')
                 transactions_df['Base Market Value'] = pd.to_numeric(transactions_df['Base Market Value'], errors='coerce')
+                # IMPORTANT: If 'Date' was ever introduced to transactions_df,
+                # ensure it's not implicitly summed or dropped if not needed.
+                # For this dataset, 'Date' is not a required column, so no action needed.
                 st.sidebar.success("Transaction Data Loaded!")
             except Exception as e:
-                st.error(f"Error converting numeric columns in Transaction Data: {e}")
+                st.error(f"Error converting numeric columns in Transaction Data: {e}. Please check 'Shares', 'Price', and 'Base Market Value' columns.")
                 transactions_df = None
 
 # --- Download Uploaded Data Section in Sidebar ---
@@ -196,7 +192,7 @@ if fund_performance_df is not None and not fund_performance_df.empty:
     selected_funds_performance = st.multiselect(
         "Select Funds for Performance Chart",
         options=fund_performance_df['Fund Name'].unique(),
-        default=list(fund_performance_df['Fund Name'].unique())[:min(5, len(fund_performance_df['Fund Name'].unique()))] # Convert to list
+        default=list(fund_performance_df['Fund Name'].unique())[:min(5, len(fund_performance_df['Fund Name'].unique()))]
     )
     if selected_funds_performance:
         filtered_performance_df = fund_performance_df[fund_performance_df['Fund Name'].isin(selected_funds_performance)]
@@ -208,7 +204,6 @@ if fund_performance_df is not None and not fund_performance_df.empty:
             title="Fund Performance Over Time"
         )
         st.plotly_chart(fig_performance, use_container_width=True)
-        # Generate HTML for report, ensuring plotly.js is included only once per report
         performance_plot_html = fig_performance.to_html(full_html=False, include_plotlyjs='cdn')
     else:
         st.info("Please select at least one fund to view performance.")
@@ -220,15 +215,16 @@ st.markdown("---")
 # 2. Security Transactions Analysis
 st.header("2. Security Transactions Analysis")
 if transactions_df is not None and not transactions_df.empty:
+    # Drop rows where essential numeric columns are NaN for calculations
     transactions_df_cleaned = transactions_df.dropna(subset=['Shares', 'Price', 'Base Market Value'])
 
     if not transactions_df_cleaned.empty:
         st.subheader("Transactions by Share Volume")
-        # Explicitly select 'Shares' for sum to avoid TypeError on datetime columns
+        # Ensure only 'Shares' is selected for sum to avoid TypeError on datetime columns
         transaction_volume = transactions_df_cleaned.groupby(['Fund', 'Security ID'])['Shares'].sum().reset_index(name='Total_Shares').sort_values(by='Total_Shares', ascending=False)
 
         fig_volume = px.bar(
-            transaction_volume.head(20), # Show top 20 for readability
+            transaction_volume.head(20),
             x="Security ID",
             y="Total_Shares",
             color="Fund",
@@ -245,7 +241,6 @@ if transactions_df is not None and not transactions_df.empty:
             title="Number of Transactions by Fund"
         )
         st.plotly_chart(fig_num_transactions, use_container_width=True)
-        # Generate HTML for report, ensure plotly.js is NOT included again (False)
         transactions_plot_html = fig_volume.to_html(full_html=False, include_plotlyjs=False) + fig_num_transactions.to_html(full_html=False, include_plotlyjs=False)
     else:
         st.warning("Transaction data became empty after cleaning missing Shares/Price values.")
@@ -260,7 +255,6 @@ st.header("3. Fund Commonalities using Clustering")
 if portfolio_df is not None and not portfolio_df.empty:
     st.markdown("This section analyzes the common relationships of funds based on their underlying portfolio holdings, industry exposure, and simulated transaction volume.")
 
-    # --- Feature Engineering for Clustering ---
     st.subheader("Clustering Parameters and Feature Engineering")
 
     portfolio_df_cleaned = portfolio_df.dropna(subset=['Market Value', 'Shares held'])
@@ -268,13 +262,11 @@ if portfolio_df is not None and not portfolio_df.empty:
         st.warning("Portfolio data became empty after cleaning missing Market Value/Shares held values.")
         clustering_plot_html = "<i>Portfolio data empty after cleaning.</i>"
     else:
-        # Group portfolio by Fund to get an aggregated view
         fund_portfolio_agg = portfolio_df_cleaned.groupby('Fund').agg(
             Total_Market_Value=('Market Value', 'sum'),
             Unique_Securities=('Security ID', 'nunique')
         ).reset_index()
 
-        # Get industry exposure for each fund
         industry_exposure = portfolio_df_cleaned.pivot_table(
             index='Fund',
             columns='Industry',
@@ -283,25 +275,27 @@ if portfolio_df is not None and not portfolio_df.empty:
             fill_value=0
         ).fillna(0)
 
-        # Merge aggregated data with industry exposure
         clustering_df = fund_portfolio_agg.set_index('Fund').join(industry_exposure).reset_index()
 
-        # Add simulated transaction volume for clustering
         if transactions_df is not None and not transactions_df.empty:
-            # Explicitly sum 'Shares'
-            fund_transaction_volume = transactions_df.groupby('Fund')['Shares'].sum().reset_index(name='Total_Shares_Traded')
-            clustering_df = pd.merge(clustering_df, fund_transaction_volume, on='Fund', how='left').fillna(0)
+            # Ensure transactions_df is properly cleaned before summing
+            transactions_df_cleaned_for_cluster = transactions_df.dropna(subset=['Shares']) # Only need shares for this sum
+            if not transactions_df_cleaned_for_cluster.empty:
+                fund_transaction_volume = transactions_df_cleaned_for_cluster.groupby('Fund')['Shares'].sum().reset_index(name='Total_Shares_Traded')
+                clustering_df = pd.merge(clustering_df, fund_transaction_volume, on='Fund', how='left').fillna(0)
+            else:
+                st.warning("Transaction data for clustering became empty after cleaning. Simulating zeros.")
+                clustering_df['Total_Shares_Traded'] = 0
         else:
             st.warning("Transaction data not available for transaction volume in clustering. Simulating zeros.")
             clustering_df['Total_Shares_Traded'] = 0
 
+
         st.write("Features used for clustering:")
         st.dataframe(clustering_df.head())
 
-        # User input for number of clusters (shapes)
         max_num_shapes = st.slider("Maximum number of fund shapes (clusters)", min_value=2, max_value=10, value=5)
 
-        # Prepare data for clustering
         features_for_clustering = clustering_df.drop(columns=['Fund'], errors='ignore')
         numeric_features = features_for_clustering.select_dtypes(include=np.number)
 
@@ -332,17 +326,14 @@ if portfolio_df is not None and not portfolio_df.empty:
                         title=f"Fund Commonalities (Clustering - {n_clusters} Shapes)"
                     )
                     st.plotly_chart(fig_cluster, use_container_width=True)
-                    # Generate HTML for report, ensure plotly.js is NOT included again (False)
                     clustering_plot_html = fig_cluster.to_html(full_html=False, include_plotlyjs=False)
 
-                    # Determine most common shape
                     most_common_shape = clustering_df['Cluster'].mode()[0]
                     st.info(f"The most common fund shape (cluster) is **Cluster {most_common_shape}**.")
 
                     st.subheader("Funds per Cluster")
                     st.dataframe(clustering_df[['Fund', 'Cluster']].sort_values(by='Cluster'))
 
-                    # Analyze cluster characteristics
                     st.subheader("Cluster Characteristics")
                     cluster_summary = clustering_df.groupby('Cluster')[numeric_features.columns].mean()
                     st.dataframe(cluster_summary)
@@ -363,24 +354,35 @@ st.header("Highest and Lowest Volume of Assets Traded")
 if transactions_df is not None and not transactions_df.empty:
     transactions_df_cleaned = transactions_df.dropna(subset=['Shares', 'Price'])
     if not transactions_df_cleaned.empty:
+        # Explicitly ensure 'Shares' and 'Price' are numeric before multiplication
+        transactions_df_cleaned['Shares'] = pd.to_numeric(transactions_df_cleaned['Shares'], errors='coerce')
+        transactions_df_cleaned['Price'] = pd.to_numeric(transactions_df_cleaned['Price'], errors='coerce')
         transactions_df_cleaned['Total_Value'] = transactions_df_cleaned['Shares'] * transactions_df_cleaned['Price']
-        top_assets_traded = transactions_df_cleaned.groupby('Security ID')['Total_Value'].sum().nlargest(10).reset_index()
-        bottom_assets_traded = transactions_df_cleaned.groupby('Security ID')['Total_Value'].sum().nsmallest(10).reset_index()
+        
+        # Drop NaNs again if Total_Value became NaN due to coerce
+        transactions_df_cleaned = transactions_df_cleaned.dropna(subset=['Total_Value'])
 
-        st.subheader("Top 10 Assets by Total Traded Value")
-        st.dataframe(top_assets_traded)
+        if not transactions_df_cleaned.empty:
+            top_assets_traded = transactions_df_cleaned.groupby('Security ID')['Total_Value'].sum().nlargest(10).reset_index()
+            bottom_assets_traded = transactions_df_cleaned.groupby('Security ID')['Total_Value'].sum().nsmallest(10).reset_index()
 
-        st.subheader("Bottom 10 Assets by Total Traded Value")
-        st.dataframe(bottom_assets_traded)
-        insights_html_traded = f"""
-        <h3>Highest and Lowest Volume of Assets Traded</h3>
-        <p><b>Top 10 Assets by Total Traded Value:</b></p>
-        {top_assets_traded.to_html(index=False)}
-        <p><b>Bottom 10 Assets by Total Traded Value:</b></p>
-        {bottom_assets_traded.to_html(index=False)}
-        """
+            st.subheader("Top 10 Assets by Total Traded Value")
+            st.dataframe(top_assets_traded)
+
+            st.subheader("Bottom 10 Assets by Total Traded Value")
+            st.dataframe(bottom_assets_traded)
+            insights_html_traded = f"""
+            <h3>Highest and Lowest Volume of Assets Traded</h3>
+            <p><b>Top 10 Assets by Total Traded Value:</b></p>
+            {top_assets_traded.to_html(index=False)}
+            <p><b>Bottom 10 Assets by Total Traded Value:</b></p>
+            {bottom_assets_traded.to_html(index=False)}
+            """
+        else:
+            st.warning("Transaction data became empty after calculating 'Total_Value' due to missing or non-numeric data.")
+            insights_html_traded = "<i>Transaction data empty after cleaning.</i>"
     else:
-        st.warning("Transaction data became empty after cleaning for trade volume analysis.")
+        st.warning("Transaction data became empty after cleaning for trade volume analysis (missing Shares/Price values).")
 else:
     st.info("Please upload valid Transaction Data to view this section.")
 
@@ -398,7 +400,6 @@ if portfolio_df is not None and not portfolio_df.empty:
         for industry in sorted(unique_industries):
             complexity_scores[industry] = st.slider(f"Complexity for '{industry}'", 0, 10, 5, key=f"comp_{industry}")
 
-        # Ensure 'Market Value' and 'Shares held' are numeric before mapping
         portfolio_df['Security_Complexity'] = portfolio_df['Industry'].map(complexity_scores).fillna(0)
 
         st.subheader("Portfolio with User-Defined Security Complexity")
