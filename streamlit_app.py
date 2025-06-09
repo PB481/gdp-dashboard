@@ -1,11 +1,88 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
 import numpy as np
-from pathlib import Path
 import base64
+
+# --- Custom K-Means Implementation (replaces scikit-learn) ---
+
+def _minmax_scale(df):
+    """
+    Applies Min-Max Scaling to a DataFrame's numeric columns.
+    Scales features to a range of [0, 1].
+    """
+    df_scaled = df.copy()
+    for col in df.columns:
+        if pd.api.types.is_numeric_dtype(df[col]):
+            min_val = df[col].min()
+            max_val = df[col].max()
+            if max_val - min_val > 0: # Avoid division by zero for constant columns
+                df_scaled[col] = (df[col] - min_val) / (max_val - min_val)
+            else:
+                df_scaled[col] = 0.5 # Assign mid-point if column is constant
+    return df_scaled
+
+def _euclidean_distance(point1, point2):
+    """Calculates the Euclidean distance between two points."""
+    return np.sqrt(np.sum((point1 - point2)**2))
+
+def _kmeans_from_scratch(data, n_clusters, max_iterations=300, random_state=42):
+    """
+    Performs K-Means clustering from scratch.
+
+    Args:
+        data (np.array): The input data as a NumPy array.
+        n_clusters (int): The number of clusters.
+        max_iterations (int): Maximum number of iterations for convergence.
+        random_state (int): Seed for random initialization.
+
+    Returns:
+        np.array: Array of cluster assignments for each data point.
+        np.array: Final centroids.
+    """
+    np.random.seed(random_state)
+    n_samples, n_features = data.shape
+
+    # 1. Initialize centroids randomly
+    # Ensure n_clusters is not greater than the number of unique samples
+    unique_indices = np.unique(data, axis=0, return_index=True)[1]
+    if n_clusters > len(unique_indices):
+        st.warning(f"Adjusting number of clusters from {n_clusters} to {len(unique_indices)} "
+                   f"because there are only {len(unique_indices)} unique data points.")
+        n_clusters = len(unique_indices)
+        if n_clusters < 1:
+            st.error("Cannot perform K-Means with fewer than one unique data point.")
+            return np.array([]), np.array([])
+    
+    # Select distinct initial centroids if possible
+    initial_indices = np.random.choice(unique_indices, n_clusters, replace=False)
+    centroids = data[initial_indices]
+
+    for _ in range(max_iterations):
+        # 2. Assign each data point to the closest centroid
+        clusters = [[] for _ in range(n_clusters)]
+        for i, sample in enumerate(data):
+            distances = [_euclidean_distance(sample, centroid) for centroid in centroids]
+            cluster_assignment = np.argmin(distances)
+            clusters[cluster_assignment].append(i)
+
+        # 3. Update centroids based on the mean of assigned points
+        new_centroids = np.array([np.mean(data[cluster_points], axis=0) if cluster_points else centroids[j]
+                                  for j, cluster_points in enumerate(clusters)])
+
+        # 4. Check for convergence
+        if np.allclose(centroids, new_centroids):
+            break
+        centroids = new_centroids
+
+    # Final assignment
+    final_assignments = np.zeros(n_samples, dtype=int)
+    for i, sample in enumerate(data):
+        distances = [_euclidean_distance(sample, centroid) for centroid in centroids]
+        final_assignments[i] = np.argmin(distances)
+
+    return final_assignments, centroids
+
 
 st.set_page_config(layout="wide", page_title="Fund Analytics Dashboard")
 
@@ -296,11 +373,12 @@ if portfolio_df is not None and not portfolio_df.empty:
         max_num_shapes = st.slider("Maximum number of fund shapes (clusters)", min_value=2, max_value=10, value=5)
 
         features_for_clustering = clustering_df.drop(columns=['Fund'], errors='ignore')
-        numeric_features = features_for_clustering.select_dtypes(include=np.number)
+        numeric_features_df = features_for_clustering.select_dtypes(include=np.number)
 
-        if not numeric_features.empty and len(numeric_features) >= 2:
-            scaler = StandardScaler()
-            scaled_features = scaler.fit_transform(numeric_features)
+        if not numeric_features_df.empty and len(numeric_features_df) >= 2:
+            # Apply custom Min-Max Scaling
+            scaled_features_df = _minmax_scale(numeric_features_df)
+            scaled_features = scaled_features_df.to_numpy() # Convert to NumPy array for clustering
 
             n_clusters = max_num_shapes
             if n_clusters > len(scaled_features):
@@ -312,16 +390,16 @@ if portfolio_df is not None and not portfolio_df.empty:
                 clustering_plot_html = "<i>Not enough funds for clustering.</i>"
             else:
                 try:
-                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-                    clustering_df['Cluster'] = kmeans.fit_predict(scaled_features)
+                    # Use custom K-Means function
+                    clustering_df['Cluster'], _ = _kmeans_from_scratch(scaled_features, n_clusters=n_clusters, random_state=42)
 
                     st.subheader("Fund Clusters (Shapes)")
                     fig_cluster = px.scatter(
                         clustering_df,
-                        x="Total_Market_Value",
-                        y="Unique_Securities",
+                        x="Total_Market_Value", # Still use original values for plotting clarity
+                        y="Unique_Securities",  # Still use original values for plotting clarity
                         color="Cluster",
-                        hover_data=['Fund'] + list(numeric_features.columns),
+                        hover_data=['Fund'] + list(numeric_features_df.columns),
                         title=f"Fund Commonalities (Clustering - {n_clusters} Shapes)"
                     )
                     st.plotly_chart(fig_cluster, use_container_width=True)
@@ -334,7 +412,7 @@ if portfolio_df is not None and not portfolio_df.empty:
                     st.dataframe(clustering_df[['Fund', 'Cluster']].sort_values(by='Cluster'))
 
                     st.subheader("Cluster Characteristics")
-                    cluster_summary = clustering_df.groupby('Cluster')[numeric_features.columns].mean()
+                    cluster_summary = clustering_df.groupby('Cluster')[numeric_features_df.columns].mean()
                     st.dataframe(cluster_summary)
                     st.markdown("Each row above represents a 'shape' or cluster, showing the average characteristics of funds within that cluster.")
                 except Exception as e:
@@ -460,12 +538,26 @@ else:
 st.markdown("---")
 st.header('App Source Code', divider='gray')
 
-current_script_path = Path(__file__)
+# In a Snowflake Streamlit app, Path(__file__) might not work as expected
+# A reliable way to show the code is to embed it as a multi-line string.
+# Replace this placeholder with your actual code content if you want to show it.
+app_code_placeholder = """
+# This section holds the actual Python code of your Streamlit app.
+# In a Snowflake Streamlit deployment, accessing the file system directly
+# via 'pathlib.Path(__file__)' might be restricted.
+# For a reliable way to display the code, you can copy the entire content
+# of your 'app.py' file and paste it here as a multi-line string.
 
-try:
-    with open(current_script_path, 'r') as f:
-        app_code = f.read()
-    with st.expander("Click to view the Python code for this app"):
-        st.code(app_code, language='python')
-except Exception as e:
-    st.error(f"Could not load app source code: {e}")
+# Example:
+# app_code_actual = \"\"\"
+# import streamlit as st
+# # ... (your entire code)
+# \"\"\"
+# st.code(app_code_actual, language='python')
+
+# For now, we'll just show a message:
+st.info("To show the full app source code in Snowflake Streamlit, embed it as a multi-line string within the script itself.")
+"""
+
+with st.expander("Click to view the Python code for this app"):
+    st.code(app_code_placeholder, language='python')
